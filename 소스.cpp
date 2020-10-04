@@ -116,10 +116,10 @@ int main(int argc, char* argv[])
 			}
 			else if (retval == 0)
 				break;
+			buf[len] = '\0';
 
 			check_file(buf, len);
 
-			buf[retval] = '\0';
 			printf("[TCP/%s:%d] %s\n", inet_ntoa(clientAddr.sin_addr),
 				ntohs(clientAddr.sin_port), buf);
 		}
@@ -147,10 +147,11 @@ void check_file(char* buf, int& len)
 		p[i] = buf[i];
 	p[idx] = NULL;
 
-	std::ofstream out(p, std::ios::app);
+	std::ofstream out(p, std::ios::trunc | std::ios::binary);
 	for (int i = idx + 1; i < len; ++i) {
 		out.put(buf[i]);
 	}
+
 	out.close();
 
 	delete[] p;
