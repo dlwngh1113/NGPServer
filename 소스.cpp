@@ -1,17 +1,21 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+
 #pragma comment(lib, "ws2_32")
 #include<WinSock2.h>
+#include<stdio.h>
 #include<iostream>
-#include<fstream>
 #include<string>
 
 #define SERVERPORT 9000
 #define BUFSIZE 512
+FILE* fp;
 
 void err_quit(const char* msg);
 void err_display(const char* msg);
 int recvn(SOCKET s, char* buf, int len, int flags);
-void check_file(char* buf, int& len);
+void recv_fileName(SOCKET clientSocket, char* buf, int& len);
+void recv_file(SOCKET clientSocket, char* buf, int& len);
 
 void err_quit(const char* msg)
 {
@@ -36,21 +40,27 @@ void err_display(const char* msg)
 
 int recvn(SOCKET s, char* buf, int len, int flags)
 {
-	int received;
-	char* ptr = buf;
+	int received = 0, retval;
 	int left = len;
 
 	while (left > 0) {
-		received = recv(s, ptr, left, flags);
-		if (received == SOCKET_ERROR)
-			return SOCKET_ERROR;
-		else if (received == 0)
-			break;
-		left -= received;
-		ptr += received;
+		int toRecv = left >= BUFSIZE ? BUFSIZE : left;
+		retval = recv(s, buf, toRecv, flags);
 
+		if (retval == SOCKET_ERROR)
+			return SOCKET_ERROR;
+		else if (retval == 0)
+			break;
+
+		left -= retval;
+		received += retval;
+
+		system("cls");
 		std::cout << "수신율 : " << (float)received / (float)len * 100.f << "%\n";
+		fwrite(buf, retval, 1, fp);
 	}
+	printf("[File Size] %d bytes received\n", len);
+	fclose(fp);
 
 	return (len - left);
 }
@@ -83,8 +93,10 @@ int main(int argc, char* argv[])
 	char buf[BUFSIZE + 1];
 	int len;
 
+	//소켓 접속 대기
 	while (true)
 	{
+		ZeroMemory(buf, BUFSIZE + 1);
 		addrlen = sizeof(clientAddr);
 		clientSocket = accept(listenSocket, (SOCKADDR*)&clientAddr, &addrlen);
 		if (clientSocket == INVALID_SOCKET) {
@@ -94,34 +106,12 @@ int main(int argc, char* argv[])
 		printf("\n[TCP 서버] 클라이언트 접속: IP주소 = %s, 포트 번호 = %d\n",
 			inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
 
+		//소켓 패킷 처리
 		while (true)
 		{
-			//파일 길이 수신
-			retval = recvn(clientSocket, (char*)&len, sizeof(int), NULL);
-			if (retval == SOCKET_ERROR) {
-				err_display("recv()");
-				break;
-			}
-			else if (retval == 0)
-				break;
-
-			printf("[TCP/%s:%d] %d bytes received\n", inet_ntoa(clientAddr.sin_addr),
-				ntohs(clientAddr.sin_port), len);
-
-			//파일 이름, 내용 수신
-			retval = recvn(clientSocket, buf, len, NULL);
-			if (retval == SOCKET_ERROR) {
-				err_display("recv()");
-				break;
-			}
-			else if (retval == 0)
-				break;
-			buf[len] = '\0';
-
-			check_file(buf, len);
-
-			printf("[TCP/%s:%d] %s\n", inet_ntoa(clientAddr.sin_addr),
-				ntohs(clientAddr.sin_port), buf);
+			ZeroMemory(buf, BUFSIZE);
+			recv_fileName(clientSocket, buf, len);
+			recv_file(clientSocket, buf, len);
 		}
 		closesocket(clientSocket);
 		printf("\n[TCP 서버] 클라이언트 종료: IP주소 = %s, 포트 번호 = %d\n",
@@ -133,26 +123,40 @@ int main(int argc, char* argv[])
 	return 0;
 }
 
-void check_file(char* buf, int& len)
+void recv_fileName(SOCKET clientSocket, char* buf, int& len)
 {
-	int idx{ 0 };
-	for (int i = 0; i < len; ++i) {
-		if (buf[i] == '\n') {
-			idx = i;
-			break;
-		}
+	//파일 이름 길이 수신
+	int retval = recv(clientSocket, (char*)&len, sizeof(int), NULL);
+	if (retval == SOCKET_ERROR) {
+		err_display("recv()");
+		return;
 	}
-	char* p = new char[idx + 1];
-	for (int i = 0; i < idx; ++i)
-		p[i] = buf[i];
-	p[idx] = NULL;
+	else if (retval == 0)
+		return;
 
-	std::ofstream out(p, std::ios::trunc | std::ios::binary);
-	for (int i = idx + 1; i < len; ++i) {
-		out.put(buf[i]);
+	//파일 이름 수신
+	retval = recv(clientSocket, buf, len, NULL);
+
+	fp = fopen(buf, "wb");
+}
+
+void recv_file(SOCKET clientSocket, char* buf, int& len) 
+{
+	//파일 길이 수신
+	int retval = recv(clientSocket, (char*)&len, sizeof(int), NULL);
+	if (retval == SOCKET_ERROR) {
+		err_display("recv()");
+		return;
 	}
+	else if (retval == 0)
+		return;
 
-	out.close();
-
-	delete[] p;
+	//파일 내용 수신
+	retval = recvn(clientSocket, buf, len, NULL);
+	if (retval == SOCKET_ERROR) {
+		err_display("recv()");
+		return;
+	}
+	else if (retval == 0)
+		return;
 }
