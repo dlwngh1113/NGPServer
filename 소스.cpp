@@ -8,14 +8,13 @@
 #include<string>
 
 #define SERVERPORT 9000
-#define BUFSIZE 512
-FILE* fp;
+#define BUFSIZE 1024
 
 void err_quit(const char* msg);
 void err_display(const char* msg);
-int recvn(SOCKET s, char* buf, int len, int flags);
-void recv_fileName(SOCKET clientSocket, char* buf, int& len);
-void recv_file(SOCKET clientSocket, char* buf, int& len);
+int recvn(SOCKET s, char* buf, int len, int flags, FILE* fp);
+int recv_fileName(SOCKET clientSocket, char* buf, int& len);
+int recv_file(SOCKET clientSocket, char* buf, int& len, FILE* fp);
 
 void err_quit(const char* msg)
 {
@@ -38,10 +37,11 @@ void err_display(const char* msg)
 	LocalFree(lpMsgBuf);
 }
 
-int recvn(SOCKET s, char* buf, int len, int flags)
+int recvn(SOCKET s, char* buf, int len, int flags, FILE* fp)
 {
 	int received = 0, retval;
 	int left = len;
+	float recvRate = 0;
 
 	while (left > 0) {
 		int toRecv = left >= BUFSIZE ? BUFSIZE : left;
@@ -55,14 +55,54 @@ int recvn(SOCKET s, char* buf, int len, int flags)
 		left -= retval;
 		received += retval;
 
-		system("cls");
-		std::cout << "수신율 : " << (float)received / (float)len * 100.f << "%\n";
+		recvRate = (float)received / (float)len * 100.f;
+		printf("수신율 : %f\r", recvRate);
 		fwrite(buf, retval, 1, fp);
 	}
 	printf("[File Size] %d bytes received\n", len);
 	fclose(fp);
 
 	return (len - left);
+}
+
+DWORD WINAPI ProcessClient(LPVOID arg)
+{
+	SOCKET clientSocket = (SOCKET)arg;
+	SOCKADDR_IN clientAddr;
+	char buf[BUFSIZE + 1] = { NULL };
+	int len, addrlen, retval;
+
+	addrlen = sizeof(clientAddr);
+	getpeername(clientSocket, (sockaddr*)&clientAddr, &addrlen);
+
+	//소켓 패킷 처리
+	while (true)
+	{
+		FILE* fp = NULL;
+		retval = recv_fileName(clientSocket, buf, len);
+		if (retval == SOCKET_ERROR) {
+			err_display("recv_fileName()");
+			break;
+		}
+		else if (retval == 0)
+			break;
+
+		retval = recv_file(clientSocket, buf, len, fp);
+		if (retval == SOCKET_ERROR) {
+			err_display("recv_file()");
+			break;
+		}
+		else if (retval == 0)
+			break;
+
+		ZeroMemory(buf, BUFSIZE);
+	}
+
+	closesocket(clientSocket);
+	printf("\n[TCP 서버] 클라이언트 종료: IP주소 = %s, 포트 번호 = %d\n",
+		inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
+
+	return 0;
 }
 
 int main(int argc, char* argv[])
@@ -90,13 +130,11 @@ int main(int argc, char* argv[])
 	SOCKET clientSocket;
 	SOCKADDR_IN clientAddr;
 	int addrlen;
-	char buf[BUFSIZE + 1];
-	int len;
+	HANDLE hThread;
 
 	//소켓 접속 대기
 	while (true)
 	{
-		ZeroMemory(buf, BUFSIZE + 1);
 		addrlen = sizeof(clientAddr);
 		clientSocket = accept(listenSocket, (SOCKADDR*)&clientAddr, &addrlen);
 		if (clientSocket == INVALID_SOCKET) {
@@ -106,16 +144,11 @@ int main(int argc, char* argv[])
 		printf("\n[TCP 서버] 클라이언트 접속: IP주소 = %s, 포트 번호 = %d\n",
 			inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
 
-		//소켓 패킷 처리
-		while (true)
-		{
-			ZeroMemory(buf, BUFSIZE);
-			recv_fileName(clientSocket, buf, len);
-			recv_file(clientSocket, buf, len);
-		}
-		closesocket(clientSocket);
-		printf("\n[TCP 서버] 클라이언트 종료: IP주소 = %s, 포트 번호 = %d\n",
-			inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
+		hThread = CreateThread(NULL, 0, ProcessClient, (LPVOID)clientSocket, 0, NULL);
+		if (NULL == hThread)
+			closesocket(clientSocket);
+		else
+			CloseHandle(hThread);
 	}
 	closesocket(listenSocket);
 
@@ -123,40 +156,41 @@ int main(int argc, char* argv[])
 	return 0;
 }
 
-void recv_fileName(SOCKET clientSocket, char* buf, int& len)
+int recv_fileName(SOCKET clientSocket, char* buf, int& len)
 {
 	//파일 이름 길이 수신
 	int retval = recv(clientSocket, (char*)&len, sizeof(int), NULL);
 	if (retval == SOCKET_ERROR) {
 		err_display("recv()");
-		return;
+		return retval;
 	}
 	else if (retval == 0)
-		return;
+		return retval;
 
 	//파일 이름 수신
 	retval = recv(clientSocket, buf, len, NULL);
 
-	fp = fopen(buf, "wb");
+	FILE* fp = fopen(buf, "wb");
+	recv_file(clientSocket, buf, len, fp);
 }
 
-void recv_file(SOCKET clientSocket, char* buf, int& len) 
+int recv_file(SOCKET clientSocket, char* buf, int& len, FILE* fp)
 {
 	//파일 길이 수신
 	int retval = recv(clientSocket, (char*)&len, sizeof(int), NULL);
 	if (retval == SOCKET_ERROR) {
 		err_display("recv()");
-		return;
+		return retval;
 	}
 	else if (retval == 0)
-		return;
+		return retval;
 
 	//파일 내용 수신
-	retval = recvn(clientSocket, buf, len, NULL);
+	retval = recvn(clientSocket, buf, len, NULL, fp);
 	if (retval == SOCKET_ERROR) {
 		err_display("recv()");
-		return;
+		return retval;
 	}
 	else if (retval == 0)
-		return;
+		return retval;
 }
