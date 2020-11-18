@@ -23,6 +23,7 @@ struct Client {
     SOCKET socket;
     char buf[BUF_SIZE + 1];
     HWND hWnd;
+    HWND hText;
     std::string file;
     unsigned char id;
 };
@@ -100,7 +101,7 @@ int recvn(SOCKET s, char* buf, int len, int flags, FILE* fp)
         received += retval;
 
         recvRate = (float)received / (float)len * 100.f;
-        DisplayText(clients[s]->hWnd, "%s - Receieve Rate:%.2f", clients[s]->file.c_str(), recvRate);
+        SendMessage(clients[s]->hWnd, PBM_SETPOS, (WPARAM)(int)recvRate, NULL);
         fwrite(buf, retval, 1, fp);
     }
     fclose(fp);
@@ -236,10 +237,12 @@ int recv_file(SOCKET clientSocket, char* buf, int& len, FILE* fp)
     else if (retval == 0)
         return retval;
 
-    clients[clientSocket]->hWnd = CreateWindow("EDIT", NULL, WS_CHILD | WS_VISIBLE | ES_READONLY, 
-        10, offset * clients[clientSocket]->id, 200, 20, g_hDlg, NULL, hInst, NULL);
-    
-    auto a = clients[clientSocket]->id;
+    clients[clientSocket]->hText = CreateWindow("static", NULL, WS_CHILD | WS_VISIBLE,
+        10, clients[clientSocket]->id * offset, 150, offset, g_hDlg, NULL, hInst, NULL);
+    SendMessage(clients[clientSocket]->hText, WM_SETTEXT, 0, (LPARAM)clients[clientSocket]->file.c_str());
+
+    clients[clientSocket]->hWnd = CreateWindowEx(NULL, PROGRESS_CLASS, NULL, WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
+        100, clients[clientSocket]->id * offset, 200, offset, g_hDlg, NULL, hInst, NULL);
 
     //파일 내용 수신
     retval = recvn(clientSocket, buf, len, NULL, fp);
@@ -251,6 +254,7 @@ int recv_file(SOCKET clientSocket, char* buf, int& len, FILE* fp)
         return retval;
 
     ::DestroyWindow(clients[clientSocket]->hWnd);
+    ::DestroyWindow(clients[clientSocket]->hText);
 }
 
 void err_quit(const char* msg)
